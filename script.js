@@ -51,14 +51,16 @@ const affixes = [
 ];
 
 const el = id => document.getElementById(id);
-const fmt = n => Math.floor(n).toLocaleString('ja-JP');
+const safeNumber = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
+const fmt = n => Math.floor(safeNumber(n)).toLocaleString('ja-JP');
 const rand = (min, max) => Math.random() * (max - min) + min;
 const pick = arr => arr[Math.floor(Math.random() * arr.length)];
 const uid = prefix => `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
 let state;
-state = loadGame();
+state = normalizeState(loadGame());
 let selectedAdventurerId = state.adventurers[0]?.id ?? null;
+let selectedPartyIds = new Set(selectedAdventurerId ? [selectedAdventurerId] : []);
 let selectedItemId = null;
 let lastTick = Date.now();
 
@@ -94,6 +96,44 @@ function loadGame() {
   }
 }
 
+
+function normalizeState(game) {
+  game.gold = safeNumber(game.gold, 0);
+  game.guildLevel = Math.max(1, Math.floor(safeNumber(game.guildLevel, 1)));
+  game.guildXp = Math.max(0, safeNumber(game.guildXp, 0));
+  game.fame = Math.max(0, safeNumber(game.fame, 0));
+  game.adventurers = Array.isArray(game.adventurers) ? game.adventurers : [];
+  game.inventory = Array.isArray(game.inventory) ? game.inventory : [];
+  game.chests = Array.isArray(game.chests) ? game.chests : [];
+  game.expeditions = Array.isArray(game.expeditions) ? game.expeditions : [];
+  game.log = Array.isArray(game.log) ? game.log : [];
+  game.facilities = { ...Object.fromEntries(facilities.map(f => [f.id, 0])), ...(game.facilities || {}) };
+  for (const key of Object.keys(game.facilities)) game.facilities[key] = Math.max(0, Math.floor(safeNumber(game.facilities[key], 0)));
+  for (const adv of game.adventurers) {
+    adv.level = Math.max(1, Math.floor(safeNumber(adv.level, 1)));
+    adv.xp = Math.max(0, safeNumber(adv.xp, 0));
+    adv.hp = Math.max(1, safeNumber(adv.hp, 45));
+    adv.attack = Math.max(1, safeNumber(adv.attack, 10));
+    adv.defense = Math.max(0, safeNumber(adv.defense, 5));
+    adv.luck = Math.max(0, safeNumber(adv.luck, 3));
+    adv.equipment = { Weapon: null, Shield: null, Helmet: null, Armor: null, Accessory: null, ...(adv.equipment || {}) };
+  }
+  for (const item of game.inventory) {
+    item.stats = { hp: 0, attack: 0, defense: 0, luck: 0, ...(item.stats || {}) };
+    for (const stat of Object.keys(item.stats)) item.stats[stat] = safeNumber(item.stats[stat], 0);
+    item.affixes = Array.isArray(item.affixes) ? item.affixes.filter(Boolean).map(a => ({ ...a, value: safeNumber(a.value, 0) })) : [];
+    item.value = Math.max(0, safeNumber(item.value, 0));
+    item.created = safeNumber(item.created, Date.now());
+  }
+  game.expeditions = game.expeditions.map(exp => ({
+    ...exp,
+    adventurerIds: Array.isArray(exp.adventurerIds) ? exp.adventurerIds : (exp.adventurerId ? [exp.adventurerId] : []),
+    start: safeNumber(exp.start, Date.now()),
+    end: safeNumber(exp.end, Date.now())
+  })).filter(exp => exp.adventurerIds.length && dungeons.some(d => d.id === exp.dungeonId));
+  return game;
+}
+
 function saveGame() {
   state.lastSeen = Date.now();
   localStorage.setItem(SAVE_KEY, JSON.stringify(state));
@@ -125,57 +165,131 @@ function weightedPick(entries) {
 }
 
 function adventurerStats(adv) {
-  const training = state.facilities.training || 0;
-  const fameBonus = 1 + state.fame * 0.01;
+  const training = safeNumber(state.facilities.training, 0);
+  const fameBonus = 1 + safeNumber(state.fame, 0) * 0.01;
+  const level = Math.max(1, safeNumber(adv.level, 1));
   const base = {
-    hp: adv.hp + adv.level * 9,
-    attack: adv.attack + adv.level * 2.3,
-    defense: adv.defense + adv.level * 1.7,
-    luck: adv.luck + adv.level * 0.9,
-    xpPct: state.fame * 0.5 + training * 4,
-    chestPct: state.fame * 0.25,
-    speedPct: state.fame * 0.3 + (state.facilities.research || 0) * 3
+    hp: safeNumber(adv.hp, 1) + level * 9,
+    attack: safeNumber(adv.attack, 1) + level * 2.3,
+    defense: safeNumber(adv.defense, 0) + level * 1.7,
+    luck: safeNumber(adv.luck, 0) + level * 0.9,
+    hpPct: 0,
+    attackPct: 0,
+    defensePct: 0,
+    luckPct: 0,
+    xpPct: safeNumber(state.fame, 0) * 0.5 + training * 4,
+    chestPct: safeNumber(state.fame, 0) * 0.25,
+    speedPct: safeNumber(state.fame, 0) * 0.3 + safeNumber(state.facilities.research, 0) * 3
   };
-  for (const itemId of Object.values(adv.equipment)) {
+  for (const itemId of Object.values(adv.equipment || {})) {
     const item = state.inventory.find(i => i.id === itemId);
     if (!item) continue;
-    base.hp += item.stats.hp || 0; base.attack += item.stats.attack || 0;
-    base.defense += item.stats.defense || 0; base.luck += item.stats.luck || 0;
-    for (const affix of item.affixes) base[affix.key] = (base[affix.key] || 0) + affix.value;
+    base.hp += safeNumber(item.stats?.hp, 0); base.attack += safeNumber(item.stats?.attack, 0);
+    base.defense += safeNumber(item.stats?.defense, 0); base.luck += safeNumber(item.stats?.luck, 0);
+    for (const affix of item.affixes || []) base[affix.key] = safeNumber(base[affix.key], 0) + safeNumber(affix.value, 0);
   }
   return {
-    hp: Math.round(base.hp * (1 + base.hpPct / 100) * (1 + training * 0.02) * fameBonus),
-    attack: Math.round(base.attack * (1 + base.attackPct / 100) * fameBonus),
-    defense: Math.round(base.defense * (1 + base.defensePct / 100) * fameBonus),
-    luck: Math.round(base.luck * (1 + base.luckPct / 100) * fameBonus),
-    xpPct: base.xpPct, chestPct: base.chestPct, speedPct: base.speedPct
+    hp: Math.max(1, Math.round(base.hp * (1 + base.hpPct / 100) * (1 + training * 0.02) * fameBonus)),
+    attack: Math.max(1, Math.round(base.attack * (1 + base.attackPct / 100) * fameBonus)),
+    defense: Math.max(0, Math.round(base.defense * (1 + base.defensePct / 100) * fameBonus)),
+    luck: Math.max(0, Math.round(base.luck * (1 + base.luckPct / 100) * fameBonus)),
+    xpPct: safeNumber(base.xpPct, 0), chestPct: safeNumber(base.chestPct, 0), speedPct: safeNumber(base.speedPct, 0)
   };
 }
 
 function powerOf(adv) {
   const s = adventurerStats(adv);
-  return Math.round(s.hp * 0.35 + s.attack * 4 + s.defense * 3 + s.luck * 2);
+  return Math.max(1, Math.round(s.hp * 0.35 + s.attack * 4 + s.defense * 3 + s.luck * 2));
+}
+
+
+function expeditionAdventurerIds(exp) {
+  return Array.isArray(exp.adventurerIds) ? exp.adventurerIds : (exp.adventurerId ? [exp.adventurerId] : []);
+}
+
+function isAdventurerBusy(advId) {
+  return state.expeditions.some(exp => expeditionAdventurerIds(exp).includes(advId));
+}
+
+function partyMaxSize() {
+  return Math.min(5, 2 + Math.floor(safeNumber(state.facilities.tavern, 0) / 2));
+}
+
+function selectedParty() {
+  return [...selectedPartyIds]
+    .map(id => state.adventurers.find(a => a.id === id))
+    .filter(adv => adv && !isAdventurerBusy(adv.id))
+    .slice(0, partyMaxSize());
+}
+
+function partyStats(party) {
+  const members = party.length ? party : [];
+  const totals = members.reduce((sum, adv) => {
+    const stats = adventurerStats(adv);
+    sum.hp += stats.hp; sum.attack += stats.attack; sum.defense += stats.defense; sum.luck += stats.luck;
+    sum.xpPct += stats.xpPct; sum.chestPct += stats.chestPct; sum.speedPct += stats.speedPct;
+    return sum;
+  }, { hp: 0, attack: 0, defense: 0, luck: 0, xpPct: 0, chestPct: 0, speedPct: 0 });
+  const count = Math.max(1, members.length);
+  totals.xpPct /= count; totals.chestPct /= count; totals.speedPct /= count;
+  return totals;
+}
+
+function partyPower(party) {
+  const stats = partyStats(party);
+  const synergy = 1 + Math.max(0, party.length - 1) * 0.08;
+  return Math.max(1, Math.round((stats.hp * 0.30 + stats.attack * 4 + stats.defense * 3 + stats.luck * 2.2) * synergy));
+}
+
+function expeditionDurationSeconds(dungeon, party) {
+  const powerRatio = partyPower(party) / Math.max(1, dungeon.power);
+  const stats = partyStats(party);
+  // 推奨戦力を大きく超えると短縮、不足すると長期化。研究/装備の速度補正も反映する。
+  const powerFactor = Math.max(0.45, Math.min(2.5, Math.pow(1 / Math.max(0.18, powerRatio), 0.55)));
+  const speedFactor = 1 - Math.min(65, Math.max(0, stats.speedPct)) / 100;
+  return Math.max(8, Math.round(dungeon.duration * powerFactor * speedFactor));
+}
+
+function partyNames(party) {
+  return party.map(adv => adv.name).join('、');
 }
 
 function recruitCost() {
   return Math.max(20, Math.round(50 * Math.pow(1.22, state.adventurers.length) * (1 - (state.facilities.tavern || 0) * 0.04)));
 }
 
-function startExpedition(advId, dungeonId) {
-  const adv = state.adventurers.find(a => a.id === advId);
+function startExpedition(adventurerIds, dungeonId) {
   const dungeon = dungeons.find(d => d.id === dungeonId);
-  if (!adv || !dungeon || state.guildLevel < dungeon.unlock) return;
-  if (state.expeditions.some(e => e.adventurerId === advId)) return notify('その冒険者は遠征中です。');
+  if (!dungeon || state.guildLevel < dungeon.unlock) return;
+  const ids = Array.isArray(adventurerIds) ? adventurerIds : [adventurerIds];
+  const party = ids.map(id => state.adventurers.find(a => a.id === id)).filter(Boolean).slice(0, partyMaxSize());
+  if (!party.length) return notify('出陣できる冒険者を選択してください。');
+  if (party.some(adv => isAdventurerBusy(adv.id))) return notify('遠征中の冒険者は同じパーティに入れられません。');
   if (state.expeditions.length >= expeditionSlots()) return notify('遠征枠が不足しています。倉庫を強化しましょう。');
-  const stats = adventurerStats(adv);
-  const duration = Math.max(10, dungeon.duration * (1 - Math.min(60, stats.speedPct) / 100));
-  state.expeditions.push({ id: uid('exp'), adventurerId: advId, dungeonId, start: Date.now(), end: Date.now() + duration * 1000, log: [] });
-  addLog(`${adv.name} が「${dungeon.name}」へ出発しました。`);
+  const duration = expeditionDurationSeconds(dungeon, party);
+  const power = partyPower(party);
+  state.expeditions.push({
+    id: uid('exp'),
+    adventurerIds: party.map(adv => adv.id),
+    dungeonId,
+    start: Date.now(),
+    end: Date.now() + duration * 1000,
+    baseDuration: dungeon.duration,
+    powerAtStart: power,
+    log: []
+  });
+  selectedPartyIds = new Set([...selectedPartyIds].filter(id => !party.some(adv => adv.id === id)));
+  if (!selectedPartyIds.size) {
+    const next = state.adventurers.find(adv => !isAdventurerBusy(adv.id));
+    if (next) selectedPartyIds.add(next.id);
+  }
+  selectedAdventurerId = [...selectedPartyIds][0] ?? selectedAdventurerId;
+  addLog(`${partyNames(party)} のパーティが「${dungeon.name}」へ出発しました。戦力${fmt(power)}、予定${duration}秒。`);
   render(); saveGame();
 }
 
 function expeditionSlots() {
-  return 1 + Math.floor((state.facilities.warehouse || 0) / 2);
+  return 2 + Math.floor(safeNumber(state.facilities.warehouse, 0) / 2);
 }
 
 function resolveExpeditions(now, silent = false) {
@@ -184,28 +298,30 @@ function resolveExpeditions(now, silent = false) {
   const summary = { gold: 0, xp: 0, chests: 0, items: 0, logs: [] };
   state.expeditions = state.expeditions.filter(e => e.end > now);
   for (const exp of completed) {
-    const adv = state.adventurers.find(a => a.id === exp.adventurerId);
+    const party = expeditionAdventurerIds(exp).map(id => state.adventurers.find(a => a.id === id)).filter(Boolean);
     const dungeon = dungeons.find(d => d.id === exp.dungeonId);
-    if (!adv || !dungeon) continue;
-    const stats = adventurerStats(adv);
-    const power = powerOf(adv);
-    const odds = Math.max(0.08, Math.min(0.98, (power / dungeon.power) * rand(0.72, 1.22)));
+    if (!party.length || !dungeon) continue;
+    const stats = partyStats(party);
+    const power = partyPower(party);
+    const odds = Math.max(0.05, Math.min(0.99, (power / Math.max(1, dungeon.power)) * rand(0.70, 1.18)));
     const success = Math.random() < odds;
-    const gold = Math.round((success ? 38 : 12) * dungeon.reward * rand(0.85, 1.25));
-    const xp = Math.round((success ? 28 : 12) * dungeon.reward * (1 + stats.xpPct / 100));
-    state.gold += gold; state.guildXp += Math.round(xp * 0.45);
-    gainXp(adv, xp);
-    summary.gold += gold; summary.xp += xp;
-    const chestChance = dungeon.chest + stats.chestPct / 100 + (state.facilities.research || 0) * 0.015;
+    const partyBonus = 1 + Math.max(0, party.length - 1) * 0.18;
+    const gold = Math.round((success ? 38 : 12) * dungeon.reward * partyBonus * rand(0.85, 1.25));
+    const xpEach = Math.round((success ? 28 : 12) * dungeon.reward * (1 + stats.xpPct / 100));
+    state.gold += gold; state.guildXp += Math.round(xpEach * party.length * 0.45);
+    for (const adv of party) gainXp(adv, xpEach);
+    summary.gold += gold; summary.xp += xpEach * party.length;
+    const chestChance = dungeon.chest + stats.chestPct / 100 + safeNumber(state.facilities.research, 0) * 0.015 + Math.max(0, party.length - 1) * 0.025;
     let chestName = '';
     if (success && Math.random() < chestChance) {
       const chest = rollChest(); state.chests.push(chest); summary.chests++;
       chestName = ` / ${chestNameById(chest.tier)}を発見`;
     }
-    if (success && Math.random() < 0.08 + (state.facilities.blacksmith || 0) * 0.01) {
+    if (success && Math.random() < 0.08 + safeNumber(state.facilities.blacksmith, 0) * 0.01 + Math.max(0, party.length - 1) * 0.015) {
       state.inventory.push(generateItem(dungeon.difficulty)); summary.items++;
     }
-    const line = `${adv.name} は「${dungeon.name}」を${success ? '踏破' : '辛くも撤退'}。金貨${fmt(gold)}・経験値${fmt(xp)}獲得${chestName}。勝率推定${Math.round(odds * 100)}%。`;
+    const duration = Math.round((safeNumber(exp.end, now) - safeNumber(exp.start, now)) / 1000);
+    const line = `${partyNames(party)} は「${dungeon.name}」を${success ? '踏破' : '辛くも撤退'}。金貨${fmt(gold)}・各経験値${fmt(xpEach)}獲得${chestName}。勝率推定${Math.round(odds * 100)}%、遠征時間${fmt(duration)}秒。`;
     summary.logs.push(line); addLog(line);
   }
   updateGuildLevel();
@@ -324,7 +440,7 @@ function prestige() {
   const gained = Math.floor(Math.sqrt(state.guildLevel) + state.adventurers.length / 2);
   const fresh = defaultState();
   Object.assign(state, fresh, { fame: state.fame + gained });
-  selectedAdventurerId = state.adventurers[0].id; selectedItemId = null;
+  selectedAdventurerId = state.adventurers[0].id; selectedPartyIds = new Set([selectedAdventurerId]); selectedItemId = null;
   addLog(`名声転生により名声ポイントを ${gained} 獲得しました。`);
   render(); saveGame();
 }
@@ -351,27 +467,34 @@ function render() {
 }
 
 function renderAdventurers() {
-  el('adventurerList').innerHTML = state.adventurers.map(adv => {
-    const stats = adventurerStats(adv), power = powerOf(adv), xpPct = Math.min(100, adv.xp / xpToNext(adv.level) * 100);
-    const busy = state.expeditions.some(e => e.adventurerId === adv.id);
-    return `<article class="card ${selectedAdventurerId === adv.id ? 'selected' : ''}" data-select-adv="${adv.id}">
-      <h3>${adv.name}</h3><div class="meta"><span class="badge rarity-${adv.rarity}">${rarityJa[adv.rarity]}</span><span class="badge">Lv.${adv.level}</span><span class="badge">戦力 ${fmt(power)}</span>${busy ? '<span class="badge">遠征中</span>' : ''}</div>
+  const party = selectedParty();
+  const selectedPower = partyPower(party);
+  const header = `<div class="party-summary"><strong>編成中パーティ</strong><span>${party.length}/${partyMaxSize()}人</span><span>合計戦力 ${fmt(selectedPower)}</span><span class="hint">カードをクリックで出陣メンバー切替</span></div>`;
+  el('adventurerList').innerHTML = header + state.adventurers.map(adv => {
+    const stats = adventurerStats(adv), power = powerOf(adv), xpPct = Math.min(100, safeNumber(adv.xp, 0) / xpToNext(adv.level) * 100);
+    const busy = isAdventurerBusy(adv.id);
+    const inParty = selectedPartyIds.has(adv.id);
+    return `<article class="card ${inParty ? 'selected' : ''} ${busy ? 'busy' : ''}" data-select-adv="${adv.id}">
+      <h3>${adv.name}</h3><div class="meta"><span class="badge rarity-${adv.rarity}">${rarityJa[adv.rarity]}</span><span class="badge">Lv.${adv.level}</span><span class="badge">戦力 ${fmt(power)}</span>${inParty ? '<span class="badge">編成中</span>' : ''}${busy ? '<span class="badge">遠征中</span>' : ''}</div>
       <div class="stats"><span>HP ${fmt(stats.hp)}</span><span>攻撃 ${fmt(stats.attack)}</span><span>防御 ${fmt(stats.defense)}</span><span>幸運 ${fmt(stats.luck)}</span></div>
       <div class="progress" title="経験値"><span style="width:${xpPct}%"></span></div>
-      <div class="meta">${Object.entries(adv.equipment).map(([slot, id]) => `<span class="badge">${slotEmoji[slot]} ${id ? state.inventory.find(i => i.id === id)?.name ?? '不明' : '未装備'}</span>`).join('')}</div>
+      <div class="meta">${Object.entries(adv.equipment || {}).map(([slot, id]) => `<span class="badge">${slotEmoji[slot]} ${id ? state.inventory.find(i => i.id === id)?.name ?? '不明' : '未装備'}</span>`).join('')}</div>
     </article>`;
   }).join('');
 }
 
 function renderDungeons() {
+  const party = selectedParty();
+  const power = partyPower(party);
   el('dungeonList').innerHTML = dungeons.map(d => {
     const locked = state.guildLevel < d.unlock;
-    const selected = state.adventurers.find(a => a.id === selectedAdventurerId);
-    const canRun = selected && !locked && !state.expeditions.some(e => e.adventurerId === selected.id) && state.expeditions.length < expeditionSlots();
+    const canRun = party.length && !locked && state.expeditions.length < expeditionSlots();
+    const duration = party.length ? expeditionDurationSeconds(d, party) : d.duration;
+    const ratio = party.length ? Math.round(power / d.power * 100) : 0;
     return `<article class="dungeon ${locked ? 'locked' : ''}">
-      <h3>${d.name}</h3><div class="meta"><span class="badge">推奨戦力 ${fmt(d.power)}</span><span class="badge">${Math.round(d.duration)}秒</span><span class="badge">宝箱 ${Math.round(d.chest * 100)}%</span></div>
-      <p class="hint">報酬倍率 x${d.reward} / 敵危険度 ${d.difficulty}</p>
-      <div class="dungeon-actions"><button ${canRun ? '' : 'disabled'} data-start-dungeon="${d.id}">${locked ? `ギルドLv${d.unlock}で解禁` : '選択冒険者を派遣'}</button></div>
+      <h3>${d.name}</h3><div class="meta"><span class="badge">推奨戦力 ${fmt(d.power)}</span><span class="badge">予定 ${fmt(duration)}秒</span><span class="badge">宝箱 ${Math.round(d.chest * 100)}%</span></div>
+      <p class="hint">報酬倍率 x${d.reward} / 敵危険度 ${d.difficulty} / 編成戦力比 ${ratio}%</p>
+      <div class="dungeon-actions"><button ${canRun ? '' : 'disabled'} data-start-dungeon="${d.id}">${locked ? `ギルドLv${d.unlock}で解禁` : `編成パーティで出陣（${party.length}人）`}</button></div>
     </article>`;
   }).join('');
 }
@@ -379,10 +502,12 @@ function renderDungeons() {
 function renderExpeditions() {
   const now = Date.now();
   el('expeditionList').innerHTML = state.expeditions.length ? state.expeditions.map(e => {
-    const adv = state.adventurers.find(a => a.id === e.adventurerId), d = dungeons.find(x => x.id === e.dungeonId);
-    const total = e.end - e.start, left = Math.max(0, e.end - now), pct = Math.min(100, (1 - left / total) * 100);
-    return `<article class="card"><h3>${adv?.name || '不明'} → ${d?.name || '不明'}</h3><div class="meta"><span class="badge">残り ${Math.ceil(left / 1000)}秒</span><span class="badge">戦力 ${adv ? fmt(powerOf(adv)) : 0}</span></div><div class="progress"><span style="width:${pct}%"></span></div></article>`;
-  }).join('') : '<p class="hint">遠征はありません。冒険者を選び、ダンジョンへ派遣しましょう。</p>';
+    const party = expeditionAdventurerIds(e).map(id => state.adventurers.find(a => a.id === id)).filter(Boolean);
+    const d = dungeons.find(x => x.id === e.dungeonId);
+    const total = Math.max(1, safeNumber(e.end, now) - safeNumber(e.start, now));
+    const left = Math.max(0, safeNumber(e.end, now) - now), pct = Math.min(100, Math.max(0, (1 - left / total) * 100));
+    return `<article class="card"><h3>${partyNames(party) || '不明なパーティ'} → ${d?.name || '不明'}</h3><div class="meta"><span class="badge">残り ${Math.ceil(left / 1000)}秒</span><span class="badge">人数 ${party.length}</span><span class="badge">戦力 ${fmt(party.length ? partyPower(party) : safeNumber(e.powerAtStart, 0))}</span></div><div class="progress"><span style="width:${pct}%"></span></div></article>`;
+  }).join('') : '<p class="hint">遠征はありません。冒険者カードを複数選び、ダンジョンへ派遣しましょう。</p>';
 }
 
 function renderInventory() {
@@ -429,13 +554,28 @@ function handleOfflineProgress() {
   }
 }
 
+
+function togglePartyMember(advId) {
+  const adv = state.adventurers.find(a => a.id === advId);
+  if (!adv) return;
+  selectedAdventurerId = advId;
+  if (isAdventurerBusy(advId)) return notify('遠征中の冒険者は編成変更できません。');
+  if (selectedPartyIds.has(advId)) {
+    selectedPartyIds.delete(advId);
+    if (!selectedPartyIds.size) selectedPartyIds.add(advId);
+    return;
+  }
+  if (selectedPartyIds.size >= partyMaxSize()) return notify(`現在の最大パーティ人数は${partyMaxSize()}人です。酒場を強化すると増えます。`);
+  selectedPartyIds.add(advId);
+}
+
 function bindEvents() {
   document.body.addEventListener('click', event => {
     const target = event.target.closest('button, article');
     if (!target) return;
     const advCard = target.closest('[data-select-adv]');
-    if (advCard && !target.matches('button')) { selectedAdventurerId = advCard.dataset.selectAdv; render(); return; }
-    if (target.dataset.startDungeon) startExpedition(selectedAdventurerId, target.dataset.startDungeon);
+    if (advCard && !target.matches('button')) { togglePartyMember(advCard.dataset.selectAdv); render(); return; }
+    if (target.dataset.startDungeon) startExpedition([...selectedPartyIds], target.dataset.startDungeon);
     if (target.dataset.equip) equipItem(target.dataset.equip);
     if (target.dataset.sell) sellItem(target.dataset.sell);
     if (target.dataset.upgrade) upgradeFacility(target.dataset.upgrade);
@@ -444,7 +584,7 @@ function bindEvents() {
   el('recruitBtn').addEventListener('click', () => {
     const cost = recruitCost();
     if (state.gold < cost) return notify('金貨が不足しています。');
-    state.gold -= cost; const adv = createAdventurer(); state.adventurers.push(adv); selectedAdventurerId = adv.id;
+    state.gold -= cost; const adv = createAdventurer(); state.adventurers.push(adv); selectedAdventurerId = adv.id; selectedPartyIds = new Set([adv.id]);
     addLog(`${adv.name}（${rarityJa[adv.rarity]}）を雇用しました。`); render(); saveGame();
   });
   el('openChestBtn').addEventListener('click', openChest);

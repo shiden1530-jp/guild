@@ -97,6 +97,9 @@ h3 { color: var(--gold); margin: 1rem 0 0.5rem; }
   overflow: hidden;
 }
 .card.selected, .item-card.selected { outline: 2px solid var(--gold); }
+.card.busy { opacity: 0.72; }
+.party-summary { display: grid; gap: 0.25rem; padding: 0.75rem; border: 1px dashed var(--border); border-radius: 14px; background: rgba(216, 173, 84, 0.07); }
+.party-summary strong { color: #ffe2a2; }
 .meta { display: flex; flex-wrap: wrap; gap: 0.35rem; margin: 0.45rem 0; }
 .badge {
   display: inline-flex;
