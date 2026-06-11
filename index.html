@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Adventurer Guild Idle | 冒険者ギルド</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <header class="hero panel glow">
+      <div>
+        <p class="eyebrow">Dark Fantasy Idle RPG</p>
+        <h1>Adventurer Guild <span>冒険者ギルド</span></h1>
+        <p class="subtitle">冒険者を雇い、迷宮へ送り、財宝を開封し、ギルドを永遠に強化しよう。</p>
+      </div>
+      <div class="resource-grid" aria-label="ギルド資源">
+        <div><span>金貨</span><strong id="goldText">0</strong></div>
+        <div><span>ギルドLv</span><strong id="guildLevelText">1</strong></div>
+        <div><span>名声</span><strong id="fameText">0</strong></div>
+        <div><span>遠征枠</span><strong id="slotsText">1</strong></div>
+      </div>
+    </header>
+
+    <main class="game-grid">
+      <aside class="panel column left-column">
+        <div class="section-heading">
+          <h2>冒険者</h2>
+          <button id="recruitBtn" class="primary">雇用</button>
+        </div>
+        <p class="hint" id="recruitCostText">雇用費: 50 金貨</p>
+        <div id="adventurerList" class="card-list"></div>
+      </aside>
+
+      <section class="panel column center-column">
+        <div class="section-heading">
+          <h2>ダンジョン遠征</h2>
+          <button id="saveBtn" class="ghost">保存</button>
+        </div>
+        <div id="dungeonList" class="dungeon-grid"></div>
+        <h3>進行中の遠征</h3>
+        <div id="expeditionList" class="card-list"></div>
+      </section>
+
+      <aside class="panel column right-column">
+        <div class="section-heading">
+          <h2>イベントログ</h2>
+          <button id="clearLogBtn" class="ghost">消去</button>
+        </div>
+        <div id="eventLog" class="log"></div>
+      </aside>
+    </main>
+
+    <section class="bottom-grid">
+      <div class="panel column">
+        <div class="section-heading wrap">
+          <h2>倉庫・装備</h2>
+          <div class="controls">
+            <select id="inventoryFilter" aria-label="装備フィルター">
+              <option value="all">全て</option>
+              <option value="Weapon">武器</option>
+              <option value="Shield">盾</option>
+              <option value="Helmet">兜</option>
+              <option value="Armor">鎧</option>
+              <option value="Accessory">装飾品</option>
+            </select>
+            <select id="inventorySort" aria-label="装備ソート">
+              <option value="power">戦力順</option>
+              <option value="rarity">希少度順</option>
+              <option value="newest">新着順</option>
+              <option value="value">売値順</option>
+            </select>
+          </div>
+        </div>
+        <div class="inventory-actions">
+          <button id="openChestBtn" class="primary">宝箱を開ける</button>
+          <button id="sellSelectedBtn" class="danger">選択を売却</button>
+          <span id="chestText" class="hint">宝箱: 0</span>
+        </div>
+        <div id="inventoryList" class="inventory-grid"></div>
+      </div>
+
+      <div class="panel column">
+        <h2>ギルド施設</h2>
+        <div id="facilityList" class="facility-grid"></div>
+      </div>
+    </section>
+  </div>
+
+  <div id="itemTooltip" class="tooltip" role="tooltip"></div>
+
+  <div id="modal" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-card glow">
+      <button id="modalClose" class="modal-close" aria-label="閉じる">×</button>
+      <div id="modalContent"></div>
+    </div>
+  </div>
+
+  <template id="deployInstructions">
+    <h2>デプロイ手順</h2>
+    <h3>GitHub Pages</h3>
+    <ol>
+      <li>このフォルダをGitHubリポジトリへpushします。</li>
+      <li>Settings → Pages を開きます。</li>
+      <li>Branch を main、フォルダを /root にして保存します。</li>
+      <li>表示されたURLへアクセスするとプレイできます。</li>
+    </ol>
+    <h3>Netlify</h3>
+    <ol>
+      <li>Netlifyで「Add new site」→「Deploy manually」を選びます。</li>
+      <li>index.html / styles.css / script.js を含むフォルダをドラッグします。</li>
+      <li>公開URLが発行されたら完了です。ビルドコマンドは不要です。</li>
+    </ol>
+  </template>
+
+  <script src="script.js"></script>
+</body>
+</html>
